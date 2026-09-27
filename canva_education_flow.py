@@ -37,6 +37,7 @@ DEFAULT_CDP_URL = "http://127.0.0.1:9222"
 DEFAULT_TIMEOUT_MS = 30_000
 UPLOAD_TIMEOUT_MS = 60_000
 POST_LOGIN_DELAY_MS = 5_000
+FINAL_FORM_FIELD_DELAY_MS = 1_000
 DEFAULT_SCHOOL_ADDRESS = "National Road 5 Phnom Penh, Campuchia"
 DEFAULT_SCHOOL_WEBSITE = "https://www.beltei.edu.kh/"
 DEFAULT_MAIL_API_URL = "https://tools.dongvanfb.net/api/graph_messages"
@@ -63,6 +64,10 @@ IDENTITY_STEP_HEADING_PATTERN = re.compile(
 )
 CREATE_ACCOUNT_NAME_PATTERN = re.compile(
     r"^(?:Họ\s+và\s+tên|Tên)(?:\s*\*)?$",
+    re.IGNORECASE,
+)
+SCHOOL_NO_OPTIONS_PATTERN = re.compile(
+    r"^(?:Không\s+có\s+tùy\s+chọn\s+nào|No\s+options?)$",
     re.IGNORECASE,
 )
 PASSKEY_SKIP_PATTERN = re.compile(
@@ -1580,12 +1585,19 @@ def fill_manual_school_details(page: Page, data: FlowData) -> None:
         name="Tên trường",
         exact=True,
     ))
+    if manual_school_name is None:
+        manual_school_name = first_visible(identity_dialog.get_by_role(
+            "combobox",
+            name="Tên trường",
+            exact=True,
+        ))
     if manual_school_name is not None:
         try:
             if manual_school_name.input_value().strip() != data.school:
                 manual_school_name.fill(data.school)
         except Exception:
             manual_school_name.fill(data.school)
+        page.wait_for_timeout(FINAL_FORM_FIELD_DELAY_MS)
 
     address_control = find_school_address_control(identity_dialog)
     if address_control is None:
@@ -1611,6 +1623,7 @@ def fill_manual_school_details(page: Page, data: FlowData) -> None:
             address_control.fill(data.school_address)
         except Exception as error:
             raise RuntimeError("Không thể nhập địa chỉ trường") from error
+    page.wait_for_timeout(FINAL_FORM_FIELD_DELAY_MS)
 
     address_option: Locator | None = None
     deadline = time.monotonic() + data.timeout_ms / 1000
@@ -1627,7 +1640,7 @@ def fill_manual_school_details(page: Page, data: FlowData) -> None:
 
     log("Chọn gợi ý địa chỉ đầu tiên")
     address_option.click()
-    page.wait_for_timeout(500)
+    page.wait_for_timeout(FINAL_FORM_FIELD_DELAY_MS)
 
     identity_dialog = wait_for_identity_dialog(page, data.timeout_ms)
     website_input = first_visible(identity_dialog.get_by_placeholder(
@@ -1644,99 +1657,101 @@ def fill_manual_school_details(page: Page, data: FlowData) -> None:
     log(f"Nhập trang web trường học: {data.school_website}")
     website_input.fill(data.school_website)
     website_input.press("Tab")
-    page.wait_for_timeout(500)
+    page.wait_for_timeout(FINAL_FORM_FIELD_DELAY_MS)
 
 
 def select_school_or_fill_manual(page: Page, data: FlowData) -> str:
     """Chọn trường có sẵn; nếu không có thì hoàn thiện form thủ công."""
-    identity_dialog = wait_for_identity_dialog(page, data.timeout_ms)
-    school_combobox = first_visible(identity_dialog.get_by_role(
-        "combobox",
-        name="Tên trường",
-        exact=True,
-    ))
-
-    # Nếu Canva đã tự chuyển sang textbox và hiện địa chỉ thì đi thẳng vào
-    # nhánh thủ công, không chờ một option sẽ không bao giờ xuất hiện.
-    if school_combobox is None:
-        if find_school_address_control(identity_dialog) is not None:
-            fill_manual_school_details(page, data)
-            return "manual"
-        raise TimeoutError("Không tìm thấy điều khiển Tên trường")
-
-    school_combobox.click()
-    school_search = last_visible(page.get_by_role(
-        "searchbox",
-        name="Tùy chọn tìm kiếm",
-        exact=True,
-    ))
-    if school_search is None:
-        raise TimeoutError("Không thấy ô tìm kiếm Tên trường")
-
     school_name = data.school.split(",", maxsplit=1)[0].strip()
     short_school_name = school_name.split(maxsplit=1)[0]
     queries = list(dict.fromkeys(
         query for query in (data.school, school_name, short_school_name)
         if query
     ))
-    school_option_pattern = re.compile(
-        re.escape(school_name),
-        re.IGNORECASE,
-    )
+    no_options_confirmed = False
 
-    for query in queries:
-        log(f"Tìm trường bằng từ khóa: {query}")
+    for attempt, query in enumerate(queries, start=1):
+        identity_dialog = wait_for_identity_dialog(page, data.timeout_ms)
+        school_combobox = first_visible(identity_dialog.get_by_role(
+            "combobox",
+            name="Tên trường",
+            exact=True,
+        ))
+        if school_combobox is None:
+            # Form đã chuyển hẳn sang nhập tay sau một kết quả rỗng.
+            if find_school_address_control(identity_dialog) is not None:
+                no_options_confirmed = True
+                break
+            raise TimeoutError("Không tìm thấy điều khiển Tên trường")
+
+        school_combobox.click()
+        page.wait_for_timeout(300)
+        school_search = last_visible(page.get_by_role(
+            "searchbox",
+            name="Tùy chọn tìm kiếm",
+            exact=True,
+        ))
+        if school_search is None:
+            raise TimeoutError("Không thấy ô tìm kiếm Tên trường")
+
+        log(f"Nhập tên trường, lần {attempt}: {query}")
         try:
-            school_search.fill(
+            school_search.fill("", timeout=min(5_000, data.timeout_ms))
+            page.wait_for_timeout(200)
+            school_search.press_sequentially(
                 query,
-                timeout=min(5_000, data.timeout_ms),
+                delay=50,
+                timeout=min(10_000, data.timeout_ms),
             )
         except PlaywrightTimeoutError:
-            # Khi không nhận diện tên trường, Canva có thể thay searchbox
-            # bằng form địa chỉ ngay trong sự kiện input. Khi đó fill() báo
-            # detached dù giá trị đã được nhận; đây là chuyển bước hợp lệ.
-            current_dialog = find_identity_dialog(page)
-            if (
-                current_dialog is not None
-                and find_school_address_control(current_dialog) is not None
-            ):
-                break
-            raise
+            # React có thể render lại searchbox. Thử lại với từ khóa ngắn hơn
+            # ở vòng sau; chưa được chuyển sang địa chỉ chỉ vì DOM thay đổi.
+            log("Ô tìm kiếm vừa được Canva render lại; sẽ thử lại")
+
+        # Delay một giây đúng như thao tác tay, sau đó mới đọc danh sách.
+        page.wait_for_timeout(FINAL_FORM_FIELD_DELAY_MS)
         query_deadline = time.monotonic() + min(5, data.timeout_ms / 1000)
 
         while time.monotonic() < query_deadline:
-            school_option = first_visible(page.get_by_role(
-                "option",
-                name=school_option_pattern,
-            ))
+            listbox = last_visible(page.get_by_role("listbox"))
+            option_scope: Locator | Page = listbox if listbox is not None else page
+            # Người dùng yêu cầu chọn đúng kết quả trên cùng.
+            school_option = first_visible(option_scope.get_by_role("option"))
             if school_option is not None:
+                try:
+                    option_text = re.sub(
+                        r"\s+",
+                        " ",
+                        school_option.inner_text(),
+                    ).strip()
+                except Exception:
+                    option_text = "kết quả đầu tiên"
+                log(f"Chọn trường ở đầu danh sách: {option_text}")
                 school_option.click()
-                page.wait_for_timeout(700)
+                page.wait_for_timeout(FINAL_FORM_FIELD_DELAY_MS)
                 log("Đã chọn trường từ danh sách gợi ý")
                 return "listed"
 
-            current_dialog = find_identity_dialog(page)
-            if (
-                current_dialog is not None
-                and find_school_address_control(current_dialog) is not None
-            ):
+            if first_visible(page.get_by_text(
+                SCHOOL_NO_OPTIONS_PATTERN,
+            )) is not None:
+                no_options_confirmed = True
                 break
             page.wait_for_timeout(200)
 
-        current_dialog = find_identity_dialog(page)
-        if (
-            current_dialog is not None
-            and find_school_address_control(current_dialog) is not None
-        ):
-            break
+        # Đóng kết quả cũ rồi mở lại ở vòng sau với từ khóa ngắn hơn.
+        if is_visible(school_search):
+            try:
+                school_search.press("Escape", timeout=1_000)
+            except Exception:
+                pass
+        page.wait_for_timeout(500)
 
-    # Đóng danh sách tìm kiếm nếu nó còn mở trước khi thao tác ô địa chỉ.
-    if is_visible(school_search):
-        try:
-            school_search.press("Escape", timeout=1_000)
-        except Exception:
-            pass
-    page.wait_for_timeout(300)
+    if not no_options_confirmed:
+        raise TimeoutError(
+            "Canva không tải được danh sách trường; không tự nhập địa chỉ "
+            "vì chưa có thông báo Không có tùy chọn nào"
+        )
 
     log("Không có trường phù hợp trong gợi ý; chuyển sang nhập thủ công")
     fill_manual_school_details(page, data)
@@ -1803,8 +1818,12 @@ def complete_identity_steps(page: Page, data: FlowData) -> None:
     identity_dialog = wait_for_identity_dialog(page, data.timeout_ms)
     full_name_input = identity_dialog.get_by_role("textbox", name="Tên đầy đủ")
     expect(full_name_input).to_be_visible(timeout=data.timeout_ms)
+    log("Điền tên đầy đủ")
     full_name_input.fill(data.full_name)
+    page.wait_for_timeout(FINAL_FORM_FIELD_DELAY_MS)
 
+    # Tên trường luôn được nhập cuối cùng để Canva có đủ thời gian ổn định
+    # các trường phía trước và giữ đúng lựa chọn từ danh sách gợi ý.
     school_mode = select_school_or_fill_manual(page, data)
     if school_mode == "manual":
         log("Đã điền tên, trường, địa chỉ và website")
