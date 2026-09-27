@@ -1,0 +1,11 @@
+# MỖI TÀI KHOẢN LÀ ĐÚNG MỘT DÒNG VẬT LÝ.
+# Không nhấn Enter ở giữa refresh_token hoặc bất kỳ trường nào.
+# Dấu | dùng để ngăn cách các trường; dữ liệu không được chứa dấu |.
+#
+# Định dạng ngắn 9 cột (loại tài liệu mặc định là Bảng lương):
+# email|password|refresh_token|client_id|recovery_email|full_name|country|school|pdf_path
+#
+# Ví dụ tài khoản 1:
+# teacher1@example.com|password1|REFRESH_TOKEN_1|CLIENT_ID_1|recovery1@example.com|Nguyen Van A|Campuchia|School A, Phnom Penh|D:\LuuCode1\PY\tool canva\docs\1.pdf
+# Ví dụ tài khoản 2:
+# teacher2@example.com|password2|REFRESH_TOKEN_2|CLIENT_ID_2|recovery2@example.com|Tran Thi B|Campuchia|School B, Phnom Penh|D:\LuuCode1\PY\tool canva\docs\2.pdf

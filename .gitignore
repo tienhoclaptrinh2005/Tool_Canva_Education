@@ -1,0 +1,5 @@
+accounts.txt
+logs/
+screenshots/
+__pycache__/
+*.pyc
