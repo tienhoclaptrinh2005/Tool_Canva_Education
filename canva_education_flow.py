@@ -100,6 +100,10 @@ OTP_REJECTED_PATTERN = re.compile(
     r"(?:code|verification code)[^.]{0,80}(?:expired|incorrect|invalid))",
     re.IGNORECASE,
 )
+OTP_INPUT_NAME_PATTERN = re.compile(
+    r"^(?:Mã|Mã\s+(?:xác\s+minh|đăng\s+nhập)|Code|Verification\s+code)$",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -607,7 +611,19 @@ def wait_for_teacher_verification_action(
 
 
 def find_otp_input(page: Page) -> Locator | None:
-    return last_visible(page.get_by_role("textbox", name="Mã"))
+    # Canva có thể dùng nhãn tiếng Việt "Mã" hoặc tiếng Anh "Code" ngay
+    # cả khi toàn trang đang ở tiếng Việt. Thuộc tính one-time-code là dấu
+    # hiệu ổn định nhất và không phụ thuộc ngôn ngữ giao diện.
+    candidates = (
+        page.locator('input[autocomplete="one-time-code"]'),
+        page.get_by_role("textbox", name=OTP_INPUT_NAME_PATTERN),
+        page.locator('input[inputmode="numeric"][maxlength="6"]'),
+    )
+    for candidate_group in candidates:
+        candidate = last_visible(candidate_group)
+        if candidate is not None:
+            return candidate
+    return None
 
 
 def otp_rejected_is_visible(page: Page) -> bool:
